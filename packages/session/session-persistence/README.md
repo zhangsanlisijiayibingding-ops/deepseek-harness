@@ -27,13 +27,17 @@ This package lets applications persist and resume session event logs through a b
 
 Mount one persistence backend to make sessions durable. The backend registers itself as `ctx.sessionPersistence` and routes every published session's live events into that session's active write handle; agent-loop — the production publication point for sessions — acquires each session's write handle before publication, so nothing else in the composition changes.
 
+`sessionPersistence` is a public service for storage backends and consumers, but acquiring the write handle for an Agent's Session is the publisher's lifecycle, not a separate bundle setup step. Third-party bundles should obtain their Session through `ctx.agents.create()` or `ctx.agents.resume()`, or reuse an existing Agent Session; do not create a parallel write handle for an Agent-owned Session. `sessionPersistence.create()` stores a Session and takes write ownership, so it is not the bundle-facing Session publication entry.
+
+Creating a new non-Agent durable Session is currently a Host and experimental internal capability. This package exposes the storage API, but it does not provide a general lifecycle API for third-party bundles to create, publish, and manage such Sessions; a future product requirement needs a separate Host-mediated lifecycle design. Opening an existing stored Session for read or write is a storage operation, distinct from creating a new Session, and it does not grant a general bundle lifecycle.
+
 ### Choosing a backend
 
 The seam ships the [JSONL](../session-persistence-jsonl/README.md) backend: one append-only `.jsonl.zstd` log per session. A third-party backend may implement the service directly; the [backend contract](#understand-the-implementation) below is what it must honor.
 
 ### What the service provides
 
-With a backend mounted, five service methods address stored sessions:
+With a backend mounted, five service methods address stored sessions. The `create` and `open('write')` examples below show the storage/backend consumer API, not a complete Session publication flow; Agent-owned Session handles are acquired by agent-loop, and third-party bundles should not copy this example to create and publish their own Agent Session.
 
 ```text
 const handle = await ctx.sessionPersistence.create(header)     // store a new session, take write ownership

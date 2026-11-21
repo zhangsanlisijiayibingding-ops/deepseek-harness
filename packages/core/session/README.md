@@ -75,6 +75,12 @@ Installed Profile Bundles use the Host-mediated `ctx.sessions.appendPluginRecord
 
 Bundle authors own their record key, payload schema, read logic, and compatibility. Declare the key in `PluginRecordMap` through `@deepseek-ai/dsh-session/types` with a type-only import of the package; the package must not be a runtime import. The `verify-plugin-record-callers` check covers repository production source only, so it cannot validate or authorize an installed bundle's declarations.
 
+Durability follows the Session's normal write-handle lifecycle. `ctx.sessions.create()` creates a live store Session but no persistence handle. A bundle that creates its own Session should use `ctx.agents.create()` or `ctx.agents.resume()` so the Agent factory acquires the write handle before publication; when extending an existing Agent Session, use that Session directly and do not call `ctx.sessionPersistence.create()` for it. `ctx.sessionPersistence.create()` is the storage backend API, not the bundle-facing Session publication entry. `ctx.sessions.flush()` is a durability checkpoint only for a Session with an active write handle, and its return value alone does not prove that storage received the record.
+
+Non-Agent durable Session creation is currently a Host and experimental internal capability. `Session.create()` together with `ctx.sessionPersistence.create()` is technically available through public packages, but it is not a supported Bundle Session creation or publication entry; a third-party Bundle must not treat that combination as a supported lifecycle. Third-party Bundles that need a durable Session they own still use `ctx.agents.create()` or `ctx.agents.resume()`, and a Bundle extending an existing Agent Session reuses that Session.
+
+`prepare()`, `enter()`, and `announce()` are cross-package SessionStore primitives. The Agent factory composes them with persistence handle acquisition, seed writes, publication, and failure rollback; a third-party Bundle should not assemble them itself in place of the Agent factory.
+
 Declare each record in `PluginRecordMap` through `@deepseek-ai/dsh-session/types`, with a description and an explicit payload type annotation in the owning experimental package's `src/`. Names use `plugin:<owner>/<record>`, where `owner` is the package name after removing the legacy `@deepseek-ai/dsh-experimental-` prefix when present, otherwise `@deepseek-ai/dsh-`; for example, `plugin:pi-extensions/entry`. TypeScript checks each name and payload against its declaration; the writer's runtime JSON snapshot rejects values that cannot be preserved losslessly. Put extension-defined or other dynamic names inside the payload of a declared record.
 
 The [experimental persistence catalog](../../../docs/experimental-persistence-catalog.md) lists current plugin-record declarations with their owners, descriptions, payload type annotations, and source files. These declarations remain separate from `SessionEventMap`, expanded persistence schemas, released type history, and `KNOWN_SESSION_EVENT_TYPES`. Records carry `ignorable: true`: a build that does not recognize one retains and skips it on read. Records never enter the model-visible surface. Resume and fork carry them with the rest of the log; Session format migration keeps them on a best-effort basis.
@@ -91,7 +97,7 @@ The logical `SessionHeader.isSeeded` field reports whether fork history exists w
 
 ### Flush durable state
 
-`ctx.sessions.flush(session)` dispatches the awaited durability checkpoint: every persistence listener flushes and the call settles after all of them. A producer that needs an immediate durability barrier awaits it instead of assuming the write-behind drained.
+`ctx.sessions.flush(session)` dispatches and awaits every `session/flush` listener, then settles. Its boolean result only reports whether any listener participated; it does not prove that the Session has a persistence writer, and it does not prove that storage committed or completed durability. `true` is not a per-Session durability confirmation. `SessionHandle.flush()` is the handle-level storage barrier for a handle's own writes; an Agent-only Bundle does not receive the Agent's internal handle.
 
 -----
 
