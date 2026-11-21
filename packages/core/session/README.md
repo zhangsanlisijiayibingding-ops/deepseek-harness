@@ -69,7 +69,11 @@ Session log positions use two numeric types. `SessionSeq` identifies an existing
 
 ### Write experimental plugin records
 
-`appendPluginRecord(session, type, data)` appends one plugin record for a package under `packages/experimental/`; the `verify-plugin-record-callers` check rejects any other production caller in this repository. Plugins outside this repository must not call it either, although no repository check can inspect them.
+`appendPluginRecord(session, type, data)` appends one plugin record for a package under `packages/experimental/`; the `verify-plugin-record-callers` check rejects any other production caller in this repository. Installed Profile Bundles must not import or call it.
+
+Installed Profile Bundles use the Host-mediated `ctx.sessions.appendPluginRecord(session, type, data)` instead. The Session must be live in that store and its `session/created` announcement must be complete. The method delegates to the same module-private commit path, so the record still carries `ignorable: true` and never enters the model-visible surface. The method does not verify caller identity or authorize a namespace: `plugin:` names are a naming and audit convention, and same-process Cordis plugins are trusted code. Treat records as best-effort extension data rather than durable business storage, keep credentials out of payloads, and reference controlled attachments for large output.
+
+Bundle authors own their record key, payload schema, read logic, and compatibility. Declare the key in `PluginRecordMap` through `@deepseek-ai/dsh-session/types` with a type-only import of the package; the package must not be a runtime import. The `verify-plugin-record-callers` check covers repository production source only, so it cannot validate or authorize an installed bundle's declarations.
 
 Declare each record in `PluginRecordMap` through `@deepseek-ai/dsh-session/types`, with a description and an explicit payload type annotation in the owning experimental package's `src/`. Names use `plugin:<owner>/<record>`, where `owner` is the package name after removing the legacy `@deepseek-ai/dsh-experimental-` prefix when present, otherwise `@deepseek-ai/dsh-`; for example, `plugin:pi-extensions/entry`. TypeScript checks each name and payload against its declaration; the writer's runtime JSON snapshot rejects values that cannot be preserved losslessly. Put extension-defined or other dynamic names inside the payload of a declared record.
 

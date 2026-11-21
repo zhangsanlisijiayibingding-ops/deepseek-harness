@@ -21,6 +21,13 @@ function openTurn(session: Session): void {
   }), { surfaceOp: 'append' })
 }
 
+/** Boot one isolated SessionStore and return its context. */
+async function createStore(): Promise<Context> {
+  const ctx = new Context()
+  await ctx.plugin(SessionStore)
+  return ctx
+}
+
 describe('plugin records', () => {
   it('commits an ignorable record outside the model-visible surface', () => {
     const session = Session.create(SessionId('record'))
@@ -144,6 +151,166 @@ describe('plugin records', () => {
       expect(pluginRecordOf(copy.snapshotEvents()[2] as SessionEvent))
         .toEqual({ type: 'plugin:test/state', seq: 2, time: events[2]?.time, data: { count: 1 } })
       expect(copy.deriveMessages()).toEqual(session.deriveMessages())
+    }
+  })
+})
+
+describe('SessionStore plugin record API', () => {
+  it('appends to a live store Session and snapshots the payload', async () => {
+    const ctx = await createStore()
+    try {
+      const session = ctx.sessions.create(SessionId('store-record'))
+      const data = { count: 1 }
+      const seq = ctx.sessions.appendPluginRecord(session, 'plugin:test/state', data)
+      data.count = 2
+
+      expect(seq).toBe(SessionSeq(0))
+      expect(session.seq).toBe(1)
+      const event = session.eventAt(seq)
+      if (event === undefined) throw new Error('record was not committed')
+      expect(event).toEqual({
+        type: 'plugin:test/state', seq: SessionSeq(0), time: event.time, data: { count: 1 }, ignorable: true,
+      })
+      expect(pluginRecordOf(event)).toEqual({
+        type: 'plugin:test/state', seq: SessionSeq(0), time: event.time, data: { count: 1 },
+      })
+      expect(session.deriveMessages()).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects a Session owned by another store without changing either log', async () => {
+    const first = await createStore()
+    const second = await createStore()
+    try {
+      const firstSession = first.sessions.create(SessionId('first-store'))
+      const secondSession = second.sessions.create(SessionId('second-store'))
+
+      expect(() => first.sessions.appendPluginRecord(secondSession, 'plugin:test/state', { count: 1 }))
+        .toThrow('is not live in this store')
+      expect(firstSession.seq).toBe(0)
+      expect(secondSession.seq).toBe(0)
+    } finally {
+      await first.fiber.dispose()
+      await second.fiber.dispose()
+    }
+  })
+
+  it('rejects a cold Session and a detached Session', async () => {
+    const ctx = await createStore()
+    try {
+      const cold = Session.create(SessionId('cold-store'))
+      expect(() => ctx.sessions.appendPluginRecord(cold, 'plugin:test/state', { count: 1 }))
+        .toThrow('is not live in this store')
+      expect(cold.seq).toBe(0)
+
+      const detached = ctx.sessions.prepare(SessionId('detached-store'))
+      const detach = ctx.sessions.enter(detached)
+      ctx.sessions.announce(detached)
+      ctx.sessions.appendPluginRecord(detached, 'plugin:test/state', { count: 1 })
+      detach()
+
+      expect(() => ctx.sessions.appendPluginRecord(detached, 'plugin:test/state', { count: 2 }))
+        .toThrow('is not live in this store')
+      expect(detached.seq).toBe(1)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects a Session whose announcement has not completed', async () => {
+    const ctx = await createStore()
+    try {
+      const pending = ctx.sessions.prepare(SessionId('pending-announcement'))
+      ctx.sessions.enter(pending)
+
+      expect(() => ctx.sessions.appendPluginRecord(pending, 'plugin:test/state', { count: 1 }))
+        .toThrow('cannot append before session/created completes')
+      expect(pending.seq).toBe(0)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it.each([
+    'plugin:',
+    'plugin:Test/state',
+    'plugin:/state',
+    'plugin:test/',
+    'plugin:test//state',
+    'plugin:-test',
+    'plugin:test state',
+    'turn/start',
+  ])('rejects the record type %j without changing the log', async (type) => {
+    const ctx = await createStore()
+    try {
+      const session = ctx.sessions.create(SessionId(`bad-type-${Buffer.from(type).toString('hex')}`))
+      const name: string = type
+
+      expect(() => {
+        // @ts-expect-error -- runtime callers can supply names outside the declared map.
+        ctx.sessions.appendPluginRecord(session, name, {})
+      }).toThrow(`plugin record type "${type}" must be "plugin:" followed by lowercase slash-separated segments`)
+      expect(session.seq).toBe(0)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects non-lossless payloads without changing the log', async () => {
+    const ctx = await createStore()
+    try {
+      const session = ctx.sessions.create(SessionId('store-lossy'))
+      const cycle: { self?: unknown } = {}
+      cycle.self = cycle
+
+      expect(() => ctx.sessions.appendPluginRecord(session, 'plugin:test/number', Number.NaN))
+        .toThrow('carries non-JSON-serializable data')
+      // @ts-expect-error -- runtime callers can supply values outside the declared payload type.
+      expect(() => ctx.sessions.appendPluginRecord(session, 'plugin:test/number', 1n))
+        .toThrow('carries non-JSON-serializable data')
+      // @ts-expect-error -- runtime callers can supply values outside the declared payload type.
+      expect(() => ctx.sessions.appendPluginRecord(session, 'plugin:test/number', undefined))
+        .toThrow('carries non-JSON-serializable data')
+      // @ts-expect-error -- runtime callers can supply values outside the declared payload type.
+      expect(() => ctx.sessions.appendPluginRecord(session, 'plugin:test/number', cycle))
+        .toThrow('carries non-JSON-serializable data')
+      expect(session.seq).toBe(0)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('retains the append reentrancy guard for the store method', async () => {
+    const ctx = await createStore()
+    try {
+      const session = ctx.sessions.create(SessionId('store-reentrant'))
+      const warnings: string[] = []
+      ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof ctx.logger.warn
+      ctx.on('session/event', (observed) => {
+        ctx.sessions.appendPluginRecord(observed, 'plugin:test/echo', {})
+      })
+
+      ctx.sessions.appendPluginRecord(session, 'plugin:test/state', { count: 1 })
+
+      expect(session.seq).toBe(1)
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toContain('session append cannot reenter while another append is being published')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('commits sequential calls in order', async () => {
+    const ctx = await createStore()
+    try {
+      const session = ctx.sessions.create(SessionId('store-sequence'))
+      expect(ctx.sessions.appendPluginRecord(session, 'plugin:test/state', { count: 1 })).toBe(SessionSeq(0))
+      expect(ctx.sessions.appendPluginRecord(session, 'plugin:test/state', { count: 2 })).toBe(SessionSeq(1))
+      expect(session.seq).toBe(2)
+    } finally {
+      await ctx.fiber.dispose()
     }
   })
 })

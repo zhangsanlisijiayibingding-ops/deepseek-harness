@@ -5,7 +5,7 @@
 
 English | [中文](experimental-persistence-catalog.zh.md)
 
-These current-source PluginRecordMap declarations describe ignorable, log-only records owned by experimental packages. Payload annotations link to their owning source without expanding referenced types. Records stay outside the known-event set, persistence schema fingerprints, and compatibility history; format migrations retain them on a best-effort basis.
+These current-source PluginRecordMap declarations describe ignorable, log-only records declared by repository packages under `packages/experimental/`. This catalog is not a complete inventory of records in an installed DSH environment; an installed Profile Bundle declares and maintains its own records outside this repository. Records stay outside the known-event set, persistence schema fingerprints, and compatibility history; format migrations retain them on a best-effort basis.
 
 Run `pnpm run gen-persistence-catalog` to regenerate both persistence catalogs, their language pairs, and associated artifacts. `pnpm run verify-persistence-catalog` checks all generated files.
 

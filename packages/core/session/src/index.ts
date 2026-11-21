@@ -1457,6 +1457,39 @@ export class SessionStore extends Service {
   }
 
   /**
+   * Append one plugin record to a live Session owned by this store.
+   *
+   * This is the Host-mediated writer for installed Profile Bundles. It confirms
+   * exact store membership through {@link liveEntryFor} and then reuses the
+   * module-private commit path, so the Session brand, `ignorable: true`,
+   * sequence, and timestamp stay authoritative. The module-level
+   * `appendPluginRecord` remains restricted to experimental repository
+   * packages; bundles must not import it.
+   *
+   * The membership check proves object ownership, not caller identity or
+   * Session authorization. A `plugin:` namespace is a naming and audit
+   * convention, not a security boundary; same-process Cordis plugins are
+   * trusted code. Records are best-effort extension data, not durable business
+   * storage, and their payloads must not contain credentials.
+   *
+   * @param session - live Session owned by this store.
+   * @param type - declared plugin record type matching the `plugin:` grammar.
+   * @param data - lossless JSON payload.
+   * @returns the committed sequence number.
+   * @throws when the Session is not live in this store, its `session/created`
+   *   announcement has not completed, the type is outside the plugin-record
+   *   grammar, or the payload is not lossless JSON.
+   */
+  appendPluginRecord<K extends Extract<keyof PluginRecordMap, PluginRecordType>>(
+    session: Session,
+    type: K,
+    data: NoInfer<PluginRecordMap[K]>,
+  ): SessionSeq {
+    this.liveEntryFor(session)
+    return commitPluginRecord(session, type, data)
+  }
+
+  /**
    * All live sessions, in creation order.
    * @returns a fresh array; mutating it does not affect the store.
    */

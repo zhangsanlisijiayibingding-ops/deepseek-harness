@@ -1,5 +1,5 @@
 /** Compile-time calls to the public plugin-record writer; excluded from production declarations. */
-import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session'
+import SessionStore, { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { LlmCallConfig, RequestUserInput } from '@deepseek-ai/dsh-llm'
 
@@ -16,6 +16,7 @@ declare module '@deepseek-ai/dsh-session/types' {
     'plugin:test/number': number
     'plugin:test/request': PluginRequestFixture
     'plugin:test.bridge/entry_1': readonly (string | number)[]
+    'plugin:test/readonly': readonly string[]
   }
 }
 
@@ -23,16 +24,30 @@ declare module '@deepseek-ai/dsh-session/types' {
  * Typecheck accepted payloads and rejected record names without executing writes.
  * @param session - target Session.
  * @param request - typed independent model request.
+ * @param store - SessionStore whose Host-mediated writer is checked.
  */
-export function checkPluginRecordWriteTypes(session: Session, request: PluginRequestFixture): void {
+export function checkPluginRecordWriteTypes(
+  session: Session,
+  request: PluginRequestFixture,
+  store: SessionStore,
+): void {
   appendPluginRecord(session, 'plugin:test/request', request)
   appendPluginRecord(session, 'plugin:test.bridge/entry_1', ['a', 2] as const)
+  store.appendPluginRecord(session, 'plugin:test/request', request)
+  store.appendPluginRecord(session, 'plugin:test.bridge/entry_1', ['a', 2] as const)
+  store.appendPluginRecord(session, 'plugin:test/readonly', ['a', 'b'] as const)
   // @ts-expect-error -- an undeclared record name has no writable payload type.
   appendPluginRecord(session, 'plugin:test/undeclared', request)
   // @ts-expect-error -- the payload must match the selected record's declaration.
   appendPluginRecord(session, 'plugin:test/state', request)
   // @ts-expect-error -- another declared payload must not widen the selected key.
   appendPluginRecord(session, 'plugin:test/state', 1)
+  // @ts-expect-error -- an undeclared record name has no writable payload type.
+  store.appendPluginRecord(session, 'plugin:test/undeclared', request)
+  // @ts-expect-error -- the payload must match the selected record's declaration.
+  store.appendPluginRecord(session, 'plugin:test/state', request)
+  // @ts-expect-error -- another declared payload must not widen the selected key.
+  store.appendPluginRecord(session, 'plugin:test/state', 1)
 }
 
 /**

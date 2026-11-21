@@ -5,7 +5,7 @@
 
 [English](experimental-persistence-catalog.md) | 中文
 
-这些当前源码中的 PluginRecordMap 声明描述实验性包拥有的 ignorable、仅日志记录。载荷类型注解链接到所属源码，不展开引用类型。记录不进入已知事件集合、持久化 schema 指纹或兼容性历史；格式迁移以尽力而为的方式保留它们。
+这些当前源码中的 PluginRecordMap 声明描述仓库内 `packages/experimental/` 包声明的 ignorable、仅日志记录。本目录不是已安装 DSH 环境或所有第三方 Bundle 的完整记录清单；已安装的 Profile Bundle 在本仓库之外自行声明并维护其记录。记录不进入已知事件集合、持久化 schema 指纹或兼容性历史；格式迁移以尽力而为的方式保留它们。
 
 运行 `pnpm run gen-persistence-catalog` 可重新生成两份持久化目录及其中英配对和关联制品。`pnpm run verify-persistence-catalog` 检查所有生成文件。
 
